@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# VPN CLI Manager
-# Enhanced wrapper for ProtonVPN CLI with additional features
+# VPN CLI Manager v2.0.0
+# Multi-provider VPN with ProtonVPN and Free VPN support
 
-VERSION="1.0.0"
+VERSION="2.0.0"
 DATA_DIR="$HOME/.config/vpn-cli"
-PROFILE_FILE="$DATA_DIR/profiles.json"
-CURRENT_PROFILE="$DATA_DIR/current_profile"
+CONFIG_FILE="$DATA_DIR/config.json"
 LOG_FILE="$DATA_DIR/vpn.log"
+HISTORY_FILE="$DATA_DIR/history.json"
 
 # Colors
 RED='\033[0;31m'
@@ -16,286 +16,163 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Initialize data directory
+# Initialize
 init_data_dir() {
-    mkdir -p "$DATA_DIR"
-    if [ ! -f "$PROFILE_FILE" ]; then
-        echo "[]" > "$PROFILE_FILE"
-    fi
+    mkdir -p "$DATA_DIR" "$DATA_DIR/free-vpn"
+    [ ! -f "$CONFIG_FILE" ] && echo '{"provider":"none"}' > "$CONFIG_FILE"
+    [ ! -f "$HISTORY_FILE" ] && echo "[]" > "$HISTORY_FILE"
 }
 
-# Print colored message
-print_msg() {
-    local color=$1
-    shift
-    echo -e "${color}$@${NC}"
+print_msg() { echo -e "${1}${@:2}${NC}"; }
+log_msg() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"; }
+get_provider() { jq -r '.provider // "none"' "$CONFIG_FILE" 2>/dev/null || echo "none"; }
+set_provider() { jq --arg p "$1" '.provider = $p' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"; log_msg "Provider: $1"; }
+
+show_setup_menu() {
+    clear
+    print_msg "$CYAN" "╔══════════════════════════════════════════════════════════╗"
+    print_msg "$CYAN" "║           VPN Provider Setup                             ║"
+    print_msg "$CYAN" "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+    print_msg "$GREEN" "  1) ProtonVPN (Requires account)"
+    echo "     • Secure and trusted"
+    echo "     • Free tier: 3 countries"
+    echo "     • Manual signup at protonvpn.com"
+    echo ""
+    print_msg "$BLUE" "  2) Free VPN (No account needed!) ★"
+    echo "     • Completely free"
+    echo "     • Uses VPNGate public servers"
+    echo "     • Multiple countries"
+    echo ""
+    print_msg "$YELLOW" "  3) Show current provider"
+    print_msg "$RED" "  0) Exit"
+    echo ""
 }
 
-# Log message
-log_msg() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
-}
-
-# Check if protonvpn-cli is installed
-check_protonvpn() {
-    if ! command -v protonvpn-cli &> /dev/null; then
-        print_msg "$RED" "❌ ProtonVPN CLI not found!"
+setup_proton() {
+    print_msg "$BLUE" "🔐 Setting up ProtonVPN..."
+    if ! command -v protonvpn-cli &>/dev/null; then
+        print_msg "$RED" "❌ ProtonVPN CLI not installed!"
         echo ""
-        print_msg "$YELLOW" "Please install ProtonVPN CLI first:"
-        echo "  • Debian/Ubuntu/Kali: https://protonvpn.com/support/linux-vpn-setup/"
-        echo "  • Or install from Proton's repository"
+        echo "Install with:"
+        echo "  sudo apt-get install -y protonvpn-cli"
         echo ""
-        exit 1
-    fi
-}
-
-# Connect to VPN
-connect_vpn() {
-    local server=$1
-    
-    print_msg "$BLUE" "🔐 Connecting to ProtonVPN..."
-    log_msg "Connecting to VPN: $server"
-    
-    if [ -z "$server" ]; then
-        # Connect to fastest server
-        print_msg "$CYAN" "→ Finding fastest server..."
-        protonvpn-cli c -f
-    else
-        # Connect to specific server
-        print_msg "$CYAN" "→ Connecting to: $server"
-        protonvpn-cli c "$server"
-    fi
-    
-    if [ $? -eq 0 ]; then
-        print_msg "$GREEN" "✅ Connected successfully!"
-        log_msg "Connected successfully"
-        save_connection_history
-    else
-        print_msg "$RED" "❌ Connection failed"
-        log_msg "Connection failed"
-    fi
-}
-
-# Disconnect from VPN
-disconnect_vpn() {
-    print_msg "$BLUE" "🔓 Disconnecting from VPN..."
-    log_msg "Disconnecting from VPN"
-    
-    protonvpn-cli d
-    
-    if [ $? -eq 0 ]; then
-        print_msg "$GREEN" "✅ Disconnected successfully"
-        log_msg "Disconnected successfully"
-    else
-        print_msg "$RED" "❌ Disconnect failed"
-        log_msg "Disconnect failed"
-    fi
-}
-
-# Reconnect to VPN
-reconnect_vpn() {
-    print_msg "$BLUE" "🔄 Reconnecting to VPN..."
-    log_msg "Reconnecting to VPN"
-    
-    protonvpn-cli r
-    
-    if [ $? -eq 0 ]; then
-        print_msg "$GREEN" "✅ Reconnected successfully!"
-        log_msg "Reconnected successfully"
-    else
-        print_msg "$RED" "❌ Reconnect failed"
-        log_msg "Reconnect failed"
-    fi
-}
-
-# Show VPN status
-show_status() {
-    print_msg "$BLUE" "📊 VPN Status:"
-    echo ""
-    protonvpn-cli s
-    echo ""
-    
-    # Show IP info
-    print_msg "$CYAN" "🌐 IP Information:"
-    if command -v curl &> /dev/null; then
-        local ip=$(curl -s https://api.ipify.org 2>/dev/null || echo "Unable to fetch")
-        local country=$(curl -s https://ipapi.co/json 2>/dev/null | grep -o '"country_name":"[^"]*' | cut -d'"' -f4 || echo "Unknown")
-        echo "  • Public IP: $ip"
-        echo "  • Country: $country"
-    else
-        echo "  • Install curl for IP information"
-    fi
-}
-
-# List available servers
-list_servers() {
-    print_msg "$BLUE" "🌍 Available ProtonVPN Servers:"
-    echo ""
-    protonvpn-cli c --help | grep -A 100 "SERVER"
-}
-
-# Quick connect options
-quick_connect() {
-    local option=$1
-    
-    case $option in
-        fast|fastest)
-            print_msg "$CYAN" "⚡ Connecting to fastest server..."
-            protonvpn-cli c -f
-            ;;
-        random|r)
-            print_msg "$CYAN" "🎲 Connecting to random server..."
-            protonvpn-cli c -r
-            ;;
-        p2p)
-            print_msg "$CYAN" "🔄 Connecting to P2P server..."
-            protonvpn-cli c --p2p
-            ;;
-        secure|sc)
-            print_msg "$CYAN" "🔒 Connecting to Secure Core server..."
-            protonvpn-cli c --sc
-            ;;
-        tor)
-            print_msg "$CYAN" "🧅 Connecting to Tor server..."
-            protonvpn-cli c --tor
-            ;;
-        *)
-            # Try to connect to country code
-            print_msg "$CYAN" "🌍 Connecting to: $option"
-            protonvpn-cli c --cc "$option"
-            ;;
-    esac
-    
-    if [ $? -eq 0 ]; then
-        print_msg "$GREEN" "✅ Connected successfully!"
-        log_msg "Quick connect: $option - success"
-    else
-        print_msg "$RED" "❌ Connection failed"
-        log_msg "Quick connect: $option - failed"
-    fi
-}
-
-# Enable/disable kill switch
-toggle_killswitch() {
-    local action=$1
-    
-    if [ "$action" = "on" ] || [ "$action" = "enable" ]; then
-        print_msg "$BLUE" "🛡️  Enabling Kill Switch..."
-        protonvpn-cli ks --on
-        print_msg "$GREEN" "✅ Kill Switch enabled"
-        log_msg "Kill Switch enabled"
-    elif [ "$action" = "off" ] || [ "$action" = "disable" ]; then
-        print_msg "$BLUE" "🛡️  Disabling Kill Switch..."
-        protonvpn-cli ks --off
-        print_msg "$YELLOW" "⚠️  Kill Switch disabled"
-        log_msg "Kill Switch disabled"
-    else
-        # Show current status
-        protonvpn-cli ks
-    fi
-}
-
-# Configure NetShield
-configure_netshield() {
-    local level=$1
-    
-    print_msg "$BLUE" "🛡️  Configuring NetShield..."
-    
-    case $level in
-        0|off)
-            protonvpn-cli ns --off
-            print_msg "$YELLOW" "NetShield: OFF"
-            ;;
-        1|malware)
-            protonvpn-cli ns --malware
-            print_msg "$GREEN" "NetShield: Malware blocking"
-            ;;
-        2|ads)
-            protonvpn-cli ns --ads-malware
-            print_msg "$GREEN" "NetShield: Ads + Malware blocking"
-            ;;
-        *)
-            # Show current status
-            protonvpn-cli ns
-            ;;
-    esac
-    
-    log_msg "NetShield configured: $level"
-}
-
-# Save connection history
-save_connection_history() {
-    local timestamp=$(date -Iseconds)
-    local server=$(protonvpn-cli s 2>/dev/null | grep "Server:" | awk '{print $2}')
-    
-    if [ -n "$server" ]; then
-        local entry=$(jq -n \
-            --arg server "$server" \
-            --arg time "$timestamp" \
-            '{server: $server, connected_at: $time}')
-        
-        jq --argjson entry "$entry" '. += [$entry] | .[-10:]' "$PROFILE_FILE" > "$PROFILE_FILE.tmp" && \
-        mv "$PROFILE_FILE.tmp" "$PROFILE_FILE"
-    fi
-}
-
-# Show connection history
-show_history() {
-    print_msg "$BLUE" "📜 Connection History (last 10):"
-    echo ""
-    
-    if [ -f "$PROFILE_FILE" ]; then
-        jq -r '.[] | "  • \(.server) - \(.connected_at)"' "$PROFILE_FILE" 2>/dev/null || \
-        print_msg "$YELLOW" "No history available"
-    else
-        print_msg "$YELLOW" "No history available"
-    fi
-}
-
-# Show logs
-show_logs() {
-    local lines=${1:-20}
-    
-    print_msg "$BLUE" "📋 Recent Logs (last $lines lines):"
-    echo ""
-    
-    if [ -f "$LOG_FILE" ]; then
-        tail -n "$lines" "$LOG_FILE"
-    else
-        print_msg "$YELLOW" "No logs available"
-    fi
-}
-
-# IP leak test
-leak_test() {
-    print_msg "$BLUE" "🔍 Running IP leak test..."
-    echo ""
-    
-    if ! command -v curl &> /dev/null; then
-        print_msg "$RED" "❌ curl not found. Please install curl."
+        echo "Then login:"
+        echo "  protonvpn-cli login"
+        read -p "Press Enter..."
         return 1
     fi
     
-    print_msg "$CYAN" "→ Checking public IP..."
-    local ip=$(curl -s https://api.ipify.org)
-    echo "  Public IP: $ip"
-    
-    print_msg "$CYAN" "→ Checking DNS leaks..."
-    local dns=$(curl -s https://dns.google/resolve?name=google.com 2>/dev/null | grep -o '"Answer"' || echo "OK")
-    if [ "$dns" = "OK" ]; then
-        print_msg "$GREEN" "  ✓ DNS appears secure"
+    if ! protonvpn-cli status &>/dev/null; then
+        print_msg "$YELLOW" "⚠️  Please login first:"
+        protonvpn-cli login
     fi
     
-    print_msg "$CYAN" "→ Checking location..."
-    curl -s https://ipapi.co/json | jq -r '"  Country: \(.country_name)\n  City: \(.city)\n  ISP: \(.org)"' 2>/dev/null
-    
-    echo ""
-    print_msg "$GREEN" "✅ Leak test complete"
+    set_provider "proton"
+    print_msg "$GREEN" "✅ ProtonVPN configured!"
+    sleep 1
 }
 
-# Show help
+setup_free_vpn() {
+    print_msg "$BLUE" "🆓 Setting up Free VPN..."
+    
+    if ! command -v openvpn &>/dev/null; then
+        print_msg "$YELLOW" "📦 Installing OpenVPN..."
+        sudo apt-get update && sudo apt-get install -y openvpn 2>&1 | grep -v "^Reading" | grep -v "^Building"
+    fi
+    
+    print_msg "$GREEN" "✅ Free VPN configured!"
+    print_msg "$CYAN" "ℹ️  No account needed - ready to connect!"
+    set_provider "free"
+    sleep 1
+}
+
+connect_proton() {
+    print_msg "$CYAN" "⚡ Connecting to ProtonVPN..."
+    [ -z "$1" ] && protonvpn-cli c -f || protonvpn-cli c "$1"
+}
+
+connect_free() {
+    local country=${1:-US}
+    print_msg "$BLUE" "🆓 Connecting to free VPN ($country)..."
+    print_msg "$YELLOW" "📥 Fetching server list..."
+    
+    local servers=$(curl -s "https://www.vpngate.net/api/iphone/" 2>/dev/null | tail -n +3 | head -20)
+    [ -z "$servers" ] && { print_msg "$RED" "❌ Failed to fetch servers"; return 1; }
+    
+    local config=$(echo "$servers" | grep -i "$country" | head -1 | cut -f15)
+    [ -z "$config" ] && config=$(echo "$servers" | head -1 | cut -f15)
+    
+    local cfg_file="$DATA_DIR/free-vpn/current.ovpn"
+    echo "$config" | base64 -d > "$cfg_file" 2>/dev/null
+    
+    print_msg "$GREEN" "✅ Config downloaded"
+    print_msg "$CYAN" "→ Connecting..."
+    
+    sudo openvpn --config "$cfg_file" --daemon --log "$DATA_DIR/openvpn.log"
+    sleep 2
+    
+    if pgrep -x openvpn >/dev/null; then
+        print_msg "$GREEN" "✅ Connected to free VPN!"
+        save_history "free" "$country"
+    else
+        print_msg "$RED" "❌ Connection failed"
+    fi
+}
+
+disconnect_vpn() {
+    local provider=$(get_provider)
+    print_msg "$BLUE" "🔓 Disconnecting..."
+    
+    case $provider in
+        proton) protonvpn-cli d ;;
+        free) sudo killall openvpn 2>/dev/null; print_msg "$GREEN" "✅ Disconnected" ;;
+        *) print_msg "$YELLOW" "⚠️  Not connected" ;;
+    esac
+}
+
+show_status() {
+    local provider=$(get_provider)
+    print_msg "$BLUE" "📊 VPN Status"
+    echo ""
+    print_msg "$CYAN" "Provider: $provider"
+    echo ""
+    
+    case $provider in
+        proton) protonvpn-cli s ;;
+        free)
+            if pgrep -x openvpn >/dev/null; then
+                print_msg "$GREEN" "✅ Free VPN: Connected"
+            else
+                print_msg "$YELLOW" "⚠️  Free VPN: Disconnected"
+            fi
+            ;;
+        none) print_msg "$YELLOW" "⚠️  Run: vpn setup" ;;
+    esac
+    
+    if command -v curl &>/dev/null; then
+        echo ""
+        print_msg "$CYAN" "🌐 IP Information:"
+        local ip=$(curl -s https://api.ipify.org 2>/dev/null || echo "Unknown")
+        local country=$(curl -s https://ipapi.co/json 2>/dev/null | jq -r '.country_name // "Unknown"')
+        echo "  • Public IP: $ip"
+        echo "  • Country: $country"
+    fi
+}
+
+save_history() {
+    local entry=$(jq -n --arg p "$1" --arg s "$2" --arg t "$(date -Iseconds)" '{provider:$p,server:$s,time:$t}')
+    jq --argjson e "$entry" '. += [$e] | .[-10:]' "$HISTORY_FILE" > "$HISTORY_FILE.tmp" && mv "$HISTORY_FILE.tmp" "$HISTORY_FILE"
+}
+
+show_history() {
+    print_msg "$BLUE" "📜 Connection History:"
+    echo ""
+    jq -r '.[] | "  • [\(.provider)] \(.server) - \(.time)"' "$HISTORY_FILE" 2>/dev/null || print_msg "$YELLOW" "No history"
+}
+
 show_help() {
     cat << HELP
 VPN CLI Manager v${VERSION}
@@ -303,115 +180,62 @@ VPN CLI Manager v${VERSION}
 Usage: vpn <command> [options]
 
 Commands:
-  connect [server]    Connect to VPN (fastest if no server specified)
-  c [server]          Alias for connect
-  
+  setup               Choose VPN provider
+  connect [country]   Connect to VPN
   disconnect          Disconnect from VPN
-  d                   Alias for disconnect
-  
-  reconnect           Reconnect to VPN
-  r                   Alias for reconnect
-  
-  status              Show VPN connection status
-  s                   Alias for status
-  
-  quick <option>      Quick connect options:
-    fast, fastest     Connect to fastest server
-    random, r         Connect to random server
-    p2p               Connect to P2P server
-    secure, sc        Connect to Secure Core server
-    tor               Connect to Tor server
-    <country>         Connect to specific country (e.g., US, UK, JP)
-  
-  killswitch <on|off> Enable or disable Kill Switch
-  ks <on|off>         Alias for killswitch
-  
-  netshield <level>   Configure NetShield:
-    0, off            Disable NetShield
-    1, malware        Block malware
-    2, ads            Block ads and malware
-  ns <level>          Alias for netshield
-  
+  status              Show status and IP
   history             Show connection history
-  logs [lines]        Show recent logs (default: 20 lines)
-  leak                Run IP leak test
-  
-  list                List available servers
-  help                Show this help message
+  switch              Switch provider
+  help                Show this help
 
 Examples:
-  vpn connect              # Connect to fastest server
-  vpn connect US-NY#42     # Connect to specific server
-  vpn quick fast           # Quick connect to fastest
-  vpn quick US             # Connect to US server
-  vpn killswitch on        # Enable kill switch
-  vpn status               # Show current status
-  vpn leak                 # Test for IP leaks
-  vpn history              # Show connection history
+  vpn setup           # First-time setup
+  vpn connect         # Connect (fastest)
+  vpn connect US      # Connect to US (free VPN)
+  vpn status          # Check connection
+  vpn disconnect      # Disconnect
 
-Requirements:
-  • ProtonVPN CLI (protonvpn-cli)
-  • curl (optional, for IP information)
-  • jq (for history feature)
+Free VPN Countries:
+  US, UK, JP, DE, FR, CA, AU, NL, KR, etc.
 
 HELP
 }
 
-# Main function
 main() {
     init_data_dir
-    check_protonvpn
+    local provider=$(get_provider)
     
     case "${1:-help}" in
+        setup)
+            while true; do
+                show_setup_menu
+                read -p "Select [0-3]: " choice
+                case $choice in
+                    1) setup_proton; break ;;
+                    2) setup_free_vpn; break ;;
+                    3) echo ""; print_msg "$CYAN" "Current: $provider"; echo ""; read -p "Press Enter..." ;;
+                    0) exit 0 ;;
+                    *) print_msg "$RED" "Invalid"; sleep 1 ;;
+                esac
+            done
+            ;;
         connect|c)
-            connect_vpn "$2"
+            [ "$provider" = "none" ] && { print_msg "$RED" "❌ Run: vpn setup"; exit 1; }
+            case $provider in
+                proton) connect_proton "$2" ;;
+                free) connect_free "$2" ;;
+            esac
             ;;
-        disconnect|d)
-            disconnect_vpn
+        disconnect|d) disconnect_vpn ;;
+        status|s) show_status ;;
+        history|h) show_history ;;
+        switch)
+            show_setup_menu
+            read -p "Switch to [1=Proton, 2=Free]: " c
+            case $c in 1) setup_proton ;; 2) setup_free_vpn ;; esac
             ;;
-        reconnect|r)
-            reconnect_vpn
-            ;;
-        status|s)
-            show_status
-            ;;
-        quick|q)
-            if [ -z "$2" ]; then
-                print_msg "$RED" "❌ Please specify a quick connect option"
-                echo ""
-                echo "Available options:"
-                echo "  fast, random, p2p, secure, tor, <country-code>"
-                exit 1
-            fi
-            quick_connect "$2"
-            ;;
-        killswitch|ks)
-            toggle_killswitch "$2"
-            ;;
-        netshield|ns)
-            configure_netshield "$2"
-            ;;
-        history|h)
-            show_history
-            ;;
-        logs|log)
-            show_logs "$2"
-            ;;
-        leak|test)
-            leak_test
-            ;;
-        list|ls|servers)
-            list_servers
-            ;;
-        help|--help|-h)
-            show_help
-            ;;
-        *)
-            print_msg "$RED" "❌ Unknown command: $1"
-            echo ""
-            show_help
-            exit 1
-            ;;
+        help|--help|-h) show_help ;;
+        *) print_msg "$RED" "❌ Unknown: $1"; echo ""; show_help; exit 1 ;;
     esac
 }
 
