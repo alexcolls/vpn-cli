@@ -1,0 +1,31 @@
+# Config directory
+.config/
+
+# Logs
+*.log
+vpn.log
+
+# Environment files
+.env
+
+# Temp files
+*.tmp
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
