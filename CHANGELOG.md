@@ -36,7 +36,7 @@ This is a major update that fundamentally changes how VPN-CLI works by adding su
 
 ### Changed
 - **Simplified command structure**
-  - Reduced from 400+ lines to 242 lines of code
+  - Reduced from 418 lines to 241 lines of code (42% reduction)
   - More maintainable and readable codebase
   - Optimized for performance
 - **Updated setup process**
@@ -72,7 +72,7 @@ This is a major update that fundamentally changes how VPN-CLI works by adding su
 - No account credentials stored for free VPN
 
 ### Performance
-- 40% reduction in code size
+- 42% reduction in code size (418→241 lines)
 - Faster startup time
 - Reduced memory footprint
 - Optimized API calls
